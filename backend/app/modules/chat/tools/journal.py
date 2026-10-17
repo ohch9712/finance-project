@@ -14,6 +14,7 @@ from app.modules.chat.tools.common import (
     rate,
     signed_money,
     status_output,
+    tool_output,
 )
 from app.modules.chat.tools.registry import ToolContext, ToolOutput, ToolSpec, register_tool
 from app.modules.journal import service as journal_service
@@ -125,7 +126,7 @@ def get_trade_stats(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         "footnote": "실현손익은 매도 거래 기준이며 수수료·세금을 반영했습니다.",
         "href": "/journal",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 def get_positions(ctx: ToolContext, params: BaseModel) -> ToolOutput:
@@ -187,7 +188,7 @@ def get_positions(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         "footnote": " ".join(footnotes),
         "href": "/journal",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 register_tool(

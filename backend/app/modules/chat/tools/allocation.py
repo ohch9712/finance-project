@@ -17,6 +17,7 @@ from app.modules.chat.tools.common import (
     krw,
     number,
     plain,
+    tool_output,
 )
 from app.modules.chat.tools.registry import ToolContext, ToolOutput, ToolSpec, register_tool
 
@@ -77,13 +78,13 @@ def get_allocation_report(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ],
         "href": "/allocation",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 def get_recommendation(ctx: ToolContext, params: BaseModel) -> ToolOutput:
     recommendation = allocation_service.get_recommendation(ctx.db, ctx.user.id)
     if recommendation.status != "ready":
-        return ToolOutput(
+        return tool_output(
             {
                 "status": recommendation.status,
                 "summary": STATUS_SUMMARY[recommendation.status],
@@ -139,7 +140,7 @@ def get_recommendation(ctx: ToolContext, params: BaseModel) -> ToolOutput:
             ],
             "href": "/allocation/recommendation/detail",
         }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 def get_risk_profile(ctx: ToolContext, params: BaseModel) -> ToolOutput:
@@ -180,7 +181,7 @@ def get_risk_profile(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         "ageBandLabel": AGE_BAND_LABEL[target.age_band],
         "baseWeights": weights,
     }
-    return ToolOutput(content, _risk_card(info, target))
+    return tool_output(content, _risk_card(info, target))
 
 
 def _risk_card(info, target) -> dict:

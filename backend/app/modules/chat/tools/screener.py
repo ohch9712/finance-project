@@ -2,7 +2,15 @@
 
 from pydantic import BaseModel
 
-from app.modules.chat.tools.common import ToolInput, market_label, plain, price, rate, unit
+from app.modules.chat.tools.common import (
+    ToolInput,
+    market_label,
+    plain,
+    price,
+    rate,
+    tool_output,
+    unit,
+)
 from app.modules.chat.tools.market import stock_extra
 from app.modules.chat.tools.registry import ToolContext, ToolOutput, ToolSpec, register_tool
 from app.modules.screener import service as screener_service
@@ -31,7 +39,7 @@ def screen_stocks(ctx: ToolContext, params: BaseModel) -> ToolOutput:
     screen_filter = params.filter
     result = screener_service.run_screen(ctx.db, screen_filter)
     if result.as_of is None:
-        return ToolOutput({"status": "no_snapshot", "message": NO_SNAPSHOT_MESSAGE})
+        return tool_output({"status": "no_snapshot", "message": NO_SNAPSHOT_MESSAGE})
     shown = result.items[:SHOWN_LIMIT]
     href = f"/stocks/screener?f={screener_service.encode_filter(screen_filter)}"
     summary = f"{result.as_of.isoformat()} 스냅샷 기준 조건에 맞는 종목은 {result.total}개입니다."
@@ -70,7 +78,7 @@ def screen_stocks(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ],
         "href": href,
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 DESCRIPTION = (

@@ -5,7 +5,7 @@ from datetime import date
 
 from pydantic import BaseModel, field_validator
 
-from app.modules.chat.tools.common import ToolInput, krw, share, status_output
+from app.modules.chat.tools.common import ToolInput, krw, share, status_output, tool_output
 from app.modules.chat.tools.registry import ToolContext, ToolOutput, ToolSpec, register_tool
 from app.modules.ledger import service as ledger_service
 
@@ -49,9 +49,10 @@ def get_spending_summary(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         )
     expenses = [item for item in summary.by_category if item.kind == "expense"]
     top = expenses[:TOP_CATEGORY_LIMIT]
-    sentence = f"{title} 수입 {summary.income_total:,}원, 지출 {summary.expense_total:,}원입니다."
+    # summary의 금액은 format_krw 전체 자릿수로 쓴다(만원·억원 축약 없음, 4.2).
+    sentence = f"{title} 수입 {krw(summary.income_total)}, 지출 {krw(summary.expense_total)}입니다."
     if top:
-        sentence += f" 지출이 가장 많은 카테고리는 {top[0].name}({top[0].amount:,}원)입니다."
+        sentence += f" 지출이 가장 많은 카테고리는 {top[0].name}({krw(top[0].amount)})입니다."
     content = {
         "summary": sentence,
         "month": summary.month,
@@ -85,7 +86,7 @@ def get_spending_summary(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ],
         "href": f"/ledger?month={summary.month}",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 register_tool(

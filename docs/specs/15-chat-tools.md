@@ -264,3 +264,47 @@ develop `5d82533`의 실제 코드와 대조해 정한 내용이다. 표와 어�
 
 - 5번("올해 매매 성적")은 연도를 알아야 해서 `get_today`를 먼저 부른다. `get_trade_stats` 설명(`journal.py`)은 이번 소유 범위가 아니라 고치지 않았다.
 - 13번 응답 첫 문장이 세액을 "970,000원"이라고 잘못 옮겼다. 같은 시드로 `estate.calc_gift_tax`를 직접 부르면 `payable_tax`는 9,700,000원이고, 도구 결과(content·카드)는 맞다. 모델의 숫자 인용 오류라 도구 선택(F4) 범위 밖이다. 실제 서버 확인과 평가 두 번 모두 `gemma4:12b`가 같은 자릿수 오류를 냈다.
+
+### 금액 인용 개선
+
+- 대상: 위 F4 남은 일의 13번 "첫째에게 1억 주면 세금 얼마야?" 응답이 도구 결과 `payableTax` 9700000(summary에는 9,700,000원)을 "970,000원"으로 옮긴 것. 브랜치 `feature/15-chat-tools-fix-2`(develop `25cfdea`에서 시작), 4.2대로 고쳤다. 도구 이름·입력 모델·카드 형식·도구 순서·시스템 프롬프트 고정 규칙은 바꾸지 않았다.
+- 고친 것
+  - 도구 결과 `Text` 필드: `chat/tools/common.py`에 원화 금액 필드 이름 목록 `KRW_FIELDS`와 공용 도우미 `with_krw_text`·`tool_output`을 두고, 모듈 도구 16개가 결과를 `tool_output`(상태 결과는 `status_output`·`error_status`)으로만 만든다. content를 끝까지 훑어 목록 안의 금액(`steps[].amount`, `schedule[].tax` 등)까지 `"payableTax": 9700000, "payableTaxText": "9,700,000원"`처럼 옆에 `format_krw` 문자열을 더하고 원값은 그대로 둔다. 카드는 바꾸지 않았다. 01a의 `app/core/format.py`는 고치지 않았다.
+  - summary: 금액이 들어가는 문장(가계부·증여세·분산 증여)을 `krw()`(=`format_krw`)로 쓰게 바꿨다. 결과 문자열은 전과 같은 전체 자릿수이고, 만원·억원 축약은 summary에 없다(테스트로 고정).
+  - 시스템 프롬프트: "도구 사용" 절 첫 줄 바로 뒤에 고정 문장 "- 금액은 도구 결과에서 이름이 Text로 끝나는 값(예: payableTaxText)이나 summary에 적힌 그대로 옮긴다. 만원·억원으로 바꾸거나 자릿수를 다시 세지 않는다."를 더했다. 가변 값은 없다.
+  - 평가 지표 "금액 불일치": `run_eval.py`가 응답의 원화 금액 표현을 원 단위 정수로 바꿔 그 질문의 도구 결과에 없으면 1건으로 센다. 표에 "금액 불일치" 열(불일치 표현 목록)을, 요약에 합계를 더했다.
+- 스펙에 없어 정한 것
+  - `Text` 대상 필드는 도구 전체가 함께 쓰는 이름 목록 하나다. 자산배분(`totalAmount`·`excludedAmount`·`actualAmount`·`targetAmount`·`diffAmount`·`targetAmounts`·`amount`), 가계부(`incomeTotal`·`expenseTotal`·`net`·`amount`), 매매일지(`realizedPnl`·`avgWin`·`avgLoss`·`avgCost`·`costBasis`·`currentPrice`·`evalAmount`·`unrealizedPnl`), 시세·지표(`price`·`change`·`marketCap`·`tradingValue`·`eps`·`bps`·`high52w`·`low52w`), 상속·증여(공제 `limit`·`usedWithin10y`·`used`·`available`, 세액 계산 단계 값, 재산·방향별 금액, 증여 일정 `amount`·`tax`, `futureValue` 등)다. 원값이 null이면 `Text`도 null, 자산군별 금액 맵(`targetAmounts`)은 같은 키의 문자열 맵(`targetAmountsText`), 정수가 아닌 원화(평균단가 등)는 카드의 `money()`와 같게 반올림한다.
+  - 외화 판단: 같은 객체의 `currency`가 있으면 그것(`KRW`만 원화), 없으면 `market`(KOSPI·KOSDAQ·KONEX·매매일지의 KRX 또는 null이면 원화), 둘 다 없으면 바깥 객체를 따른다. 달러 거래·해외 종목 값에는 `Text`를 넣지 않는다(summary의 `$` 문자열은 그대로).
+  - 지표의 도구 결과는 SSE에 없어 대화 저장 행(`tool_results`)에서 읽는다(Ollama `content`·Gemini `result[].text` 모두 문자열을 JSON으로 풀어 훑는다). 비교 대상은 정수 값(음수는 절댓값, 정수가 아닌 숫자는 반올림)과, 문자열(`…Text`·summary·02의 방향·이유 문장 등) 속 원화 금액을 같은 파서로 뽑은 값이다. 4.2는 "원값과 `…Text`"라고 적었지만, 도구가 준 문장 속 금액을 그대로 인용한 것은 불일치로 세지 않으려고 문자열 전체를 넣었다. 1만원 미만은 세지 않고, 반올림한 축약(예: "8억 2,753만 원")은 원 단위로 정확히 같지 않으면 불일치다.
+  - 금액 표현 파서: 쉼표·소수, 조·억·만 단위와 그 안의 천·백(`2천5백만원`), 단위 사이 공백(`1억 2,000만 원`)을 읽는다. 숫자 뒤 "원칙·원리·원래"는 금액이 아니다.
+- 회귀 테스트
+  - `backend/tests/chat/test_tool_amount_text.py`(9개): 도우미의 금액·null·맵·반올림·원값 유지, 외화 건너뛰기, 기존 `Text` 유지, 모듈 도구가 `ToolOutput`을 직접 만들지 않음, 시드 사용자로 도구 16개를 실제로 불러 모든 숫자 필드가 원화 금액(`Text` 있음·값 일치) 또는 비금액 목록 중 하나로 분류되는지(빠진 필드를 잡는지 `futureValue`를 잠시 빼서 확인함)·summary 축약 없음·카드에 `Text` 없음, 증여세 `payableTaxText`와 summary, 원화만 `realizedPnlText`, 분산 증여·가계부 `Text`, 시스템 프롬프트 새 문장이 도구 사용 절에 한 번.
+  - `backend/tests/chat/test_evals.py`(7개 추가): 만원·억원·쉼표·조·천·백 표현 파싱, 날짜·나이·퍼센트·"원칙" 제외, 도구 결과 정수·`Text`·summary·음수·bool 처리, Gemini 저장 항목, 불일치 판정(자릿수 오류만, 같은 값의 만원 표기와 1만원 미만 제외, 도구 없는 질문), 표 열과 합계, 가짜 공급자로 `ask`가 저장 행에서 도구 결과를 읽는지.
+  - 기존 테스트 기대값: `test_tools_ledger_journal.py`의 `bestTrade` exact 비교와 `byCategory` 항목에 `…Text`를 더했다.
+
+#### 검사 결과
+
+- 백엔드: `uv run ruff check .`·`uv run ruff format --check .` 통과, `uv run pytest` 1384개 통과. 프론트·마이그레이션은 바꾸지 않았다.
+- 평가 세트(로컬 Ollama `gemma4:12b`만, `cd backend && LLM_PERSONAL_PROVIDER=ollama uv run python -m app.modules.chat.evals.run_eval`, 각 약 17분, 시드는 롤백, 시작 전 메모리 압력 1 확인, 평가 중 pytest·build 동시 실행 없음). 변경 전은 지표만 넣은 커밋 `6ad025b`, 변경 후는 `50bfe23`이다. 실행 로그의 외부 요청은 `127.0.0.1:11434`(Ollama)뿐이었다.
+
+| 지표 | 변경 전(`6ad025b`) | 변경 후(`50bfe23`) |
+| --- | --- | --- |
+| 처음 부른 도구 일치 | 16/17 | 16/17 |
+| 기대 도구 호출 | 17/17 | 17/17 |
+| 금지 문구 | 0건 | 0건 |
+| 금액 불일치 | 5건 | 0건 |
+| 오류 응답 | 0건 | 0건 |
+
+| # | 질문 | 변경 전 금액 불일치 | 변경 후 |
+| --- | --- | --- | --- |
+| 13 | 첫째에게 1억 주면 세금 얼마야? | 970,000원(도구 결과 9,700,000원) | 없음(응답이 "첫째에게 100,000,000원을 증여할 때 예상되는 세금은"으로 시작하고 응답의 금액이 모두 도구 결과에 있음) |
+| 14 | 자녀에게 미리 증여하는 게 나아, 그냥 상속하는 게 나아? | 8억 2,753만 원, 8억 2,190만 원, 8억 2,190만 원, 562만 원 | 없음 |
+
+- 변경 전 14번은 방향별 원 단위 금액을 만원 단위로 반올림해 옮겼고(원 단위로 같지 않음), "562만 원"은 두 방향의 차이로 보이는 값을 모델이 직접 계산했다(도구 결과에 없음). 변경 후에는 두 질문 모두 도구 결과의 금액을 그대로 옮겼다. 나머지 15문항은 두 번 모두 불일치가 없었고, 처음 부른 도구는 두 번 모두 5번만 `get_today`였다(F4 남은 일과 같음).
+- 실제 서버 확인(`LLM_PERSONAL_PROVIDER=ollama scripts/start.sh backend`, 8015, 로컬 Ollama `gemma4:12b`): `run_eval.seed_user`와 같은 시드를 공개 API로 만든 사용자로 13번 질문을 보냈다. `estimate_gift_tax`를 처음 불렀고, 응답 첫 문장이 "첫째에게 100,000,000원을 증여할 경우, 예상 납부 세액은 9,700,000원입니다"로 카드 세액(9,700,000원)과 같았다. 응답의 다른 금액(증여재산공제 20,000,000원, 과세표준 100,000,000원, 산출세액 10,000,000원, 신고세액공제 300,000원)도 모두 도구 결과에 있는 값이다. 확인 뒤 `scripts/stop.sh backend`로 멈췄다. 확인용 시드 사용자는 워크트리 DB(`finance_15`)에만 남아 있다.
+
+#### 남은 일
+
+- 금액 불일치 0건은 평가 한 번의 결과다. 모델 출력은 실행마다 달라지므로 다음 평가에서도 지표를 함께 본다.
+- 5번("올해 매매 성적")이 `get_today`를 먼저 부르는 것은 F4 남은 일 그대로다(`journal.py` 설명은 이번 범위에서 바꾸지 않았다).

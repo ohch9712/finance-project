@@ -41,9 +41,16 @@ def test_spending_this_month_by_default(auth_client, db, monkeypatch):
     assert content["net"] == 2_380_000
     assert content["summary"].startswith("2026년 10월 수입 3,000,000원, 지출 620,000원입니다.")
     assert "식비(300,000원)" in content["summary"]
-    assert {"name": "급여", "kind": "income", "amount": 3_000_000, "ratio": 100.0} in content[
-        "byCategory"
-    ]
+    # 원화 금액 옆에 형식화 문자열을 함께 둔다(15 4.2).
+    salary = {
+        "name": "급여",
+        "kind": "income",
+        "amount": 3_000_000,
+        "amountText": "3,000,000원",
+        "ratio": 100.0,
+    }
+    assert salary in content["byCategory"]
+    assert (content["incomeTotalText"], content["netText"]) == ("3,000,000원", "2,380,000원")
 
     card = result.card
     assert set(card) == {
@@ -115,6 +122,7 @@ def test_trade_stats_range_and_card(auth_client, db, monkeypatch):
     assert krw["bestTrade"] == {
         "symbolName": "삼성전자",
         "realizedPnl": 50_000,
+        "realizedPnlText": "50,000원",  # 원화 금액 옆 형식화 문자열(15 4.2)
         "tradedOn": "2026-05-02",
     }
     assert "tradeId" not in krw["bestTrade"]

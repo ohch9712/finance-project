@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from pydantic import BaseModel, StringConstraints
 
-from app.modules.chat.tools.common import ToolInput
+from app.modules.chat.tools.common import ToolInput, tool_output
 from app.modules.chat.tools.registry import ToolContext, ToolOutput, ToolSpec, register_tool
 from app.modules.learn import service as learn_service
 
@@ -30,7 +30,7 @@ def search_learning(ctx: ToolContext, params: BaseModel) -> ToolOutput:
     assert isinstance(params, LearnInput)
     posts = learn_service.search_posts(ctx.db, params.query, limit=SEARCH_LIMIT)
     if not posts:
-        return ToolOutput(
+        return tool_output(
             {
                 "status": "no_results",
                 "message": (
@@ -69,7 +69,7 @@ def search_learning(ctx: ToolContext, params: BaseModel) -> ToolOutput:
             for post in posts
         ],
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 register_tool(

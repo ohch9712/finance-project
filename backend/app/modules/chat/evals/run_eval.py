@@ -1,8 +1,9 @@
 """챗봇 도구 선택 수동 평가(스펙 15 7절).
 
 실제 personal 공급자(`LLM_PERSONAL_PROVIDER`: 로컬 Ollama 또는 결제가 연결된 Gemini)로
-questions.yaml의 질문을 돌려, 처음 부른 도구가 기대와 같은지와 금지 문구(매매 권유 표현)가
-없는지 집계해 Markdown 표로 출력한다. 비용과 실행 시간 때문에 CI·pytest에서는 돌리지 않는다.
+questions.yaml의 질문을 돌려, 처음 부른 도구가 기대와 같은지, 금지 문구(매매 권유 표현)가
+없는지, 응답의 원화 금액이 그 질문에서 부른 도구 결과에 있는지(금액 불일치, 15 4.2) 집계해
+Markdown 표로 출력한다. 비용과 실행 시간 때문에 CI·pytest에서는 돌리지 않는다.
 
     cd backend && uv run python -m app.modules.chat.evals.run_eval [--limit N]
 
@@ -15,11 +16,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import yaml
 from fastapi.testclient import TestClient
@@ -30,6 +33,7 @@ from app.api.deps import get_db
 from app.core.config import get_settings
 from app.core.time import today_kst
 from app.integrations.llm.status import get_ai_status
+from app.modules.chat import repository
 
 QUESTIONS_PATH = Path(__file__).with_name("questions.yaml")
 # 매수·매도를 권하는 표현(정보 제공 서비스라 답에 나오면 안 된다)
@@ -56,8 +60,18 @@ COLUMNS = (
     "처음 일치",
     "기대 도구 호출",
     "금지 문구",
+    "금액 불일치",
     "응답 앞부분",
 )
+
+# 원화 금액 표현: 9,700,000원, 970만원, 1.2억원, 12,756억원, 1억 2,000만 원, 3천만원(15 4.2)
+AMOUNT_NUMBER = r"\d[\d,]*(?:\.\d+)?"
+AMOUNT_UNITS = {"조": 10**12, "억": 10**8, "만": 10**4, "천": 10**3, "백": 10**2}
+AMOUNT_PATTERN = re.compile(
+    rf"(?<![\d.,])({AMOUNT_NUMBER}(?:\s*[조억만천백](?:\s*{AMOUNT_NUMBER})?)*)\s*원(?![칙리래])"
+)
+AMOUNT_TOKEN = re.compile(rf"({AMOUNT_NUMBER})|([조억만천백])")
+MIN_AMOUNT = 10_000  # 1만원 미만 금액은 세지 않는다
 
 
 @dataclass(frozen=True)
@@ -72,6 +86,8 @@ class Outcome:
     tools: list[str] = field(default_factory=list)
     text: str = ""
     error: str | None = None
+    # 이 질문에서 저장한 도구 결과 행의 content(공급자 원본 항목 목록)
+    tool_results: list = field(default_factory=list)
 
     @property
     def first_tool(self) -> str | None:
@@ -90,6 +106,10 @@ class Outcome:
     def forbidden(self) -> list[str]:
         return forbidden_phrases(self.text)
 
+    @property
+    def amount_mismatches(self) -> list[str]:
+        return amount_mismatches(self.text, self.tool_results)
+
 
 def load_questions(path: Path = QUESTIONS_PATH) -> list[Question]:
     rows = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -99,6 +119,77 @@ def load_questions(path: Path = QUESTIONS_PATH) -> list[Question]:
 def forbidden_phrases(text: str) -> list[str]:
     compact = text.replace("\n", " ")
     return [phrase for phrase in FORBIDDEN_PHRASES if phrase in compact]
+
+
+def _amount_value(expression: str) -> int:
+    """`1억 2,000만` → 120000000. 천·백은 만·억·조 단위 안의 자릿수로 더한다."""
+    total = Decimal(0)
+    chunk = Decimal(0)
+    number: Decimal | None = None
+    for digits, unit in AMOUNT_TOKEN.findall(expression):
+        if digits:
+            number = Decimal(digits.replace(",", ""))
+        elif AMOUNT_UNITS[unit] < 10**4:
+            chunk += (Decimal(1) if number is None else number) * AMOUNT_UNITS[unit]
+            number = None
+        else:
+            total += (chunk + (number or 0)) * AMOUNT_UNITS[unit]
+            chunk = Decimal(0)
+            number = None
+    return int(total + chunk + (number or 0))
+
+
+def krw_amounts(text: str) -> list[tuple[str, int]]:
+    """문장에서 원화 금액 표현을 찾아 (표현, 원 단위 정수) 목록으로 돌려준다."""
+    return [
+        (match.group(0).strip(), _amount_value(match.group(1)))
+        for match in AMOUNT_PATTERN.finditer(text)
+    ]
+
+
+def tool_amounts(tool_results: list) -> set[int]:
+    """도구 결과의 정수 값(절댓값)과 문자열(`…Text`·summary 등) 속 원화 금액을 모은다.
+
+    저장 항목은 공급자마다 모양이 달라(Ollama `content`, Gemini `result[].text`) 모든 문자열을
+    JSON으로 풀어 본 뒤 훑는다.
+    """
+    known: set[int] = set()
+
+    def walk(value) -> None:
+        if isinstance(value, bool) or value is None:
+            return
+        if isinstance(value, int):
+            known.add(abs(value))
+        elif isinstance(value, float):
+            known.add(abs(round(value)))
+        elif isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+            except ValueError:
+                decoded = value
+            if isinstance(decoded, dict | list):
+                walk(decoded)
+            else:
+                known.update(amount for _, amount in krw_amounts(value))
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(tool_results)
+    return known
+
+
+def amount_mismatches(text: str, tool_results: list) -> list[str]:
+    """응답의 원화 금액(1만원 이상) 중 도구 결과에 없는 것의 표현 목록"""
+    known = tool_amounts(tool_results)
+    return [
+        expression
+        for expression, amount in krw_amounts(text)
+        if amount >= MIN_AMOUNT and amount not in known
+    ]
 
 
 def parse_sse(body: str) -> list[tuple[str, dict]]:
@@ -244,14 +335,15 @@ def seed_user(client: TestClient, today: date) -> None:
 # ── 실행 ────────────────────────────────────────────────────────────
 
 
-def ask(client: TestClient, question: Question) -> Outcome:
+def ask(client: TestClient, db: Session, question: Question) -> Outcome:
     outcome = Outcome(question)
     conversation = client.post("/api/chat/conversations", json={"title": "도구 평가"})
     if conversation.status_code != 201:
         outcome.error = f"대화 생성 실패 {conversation.status_code}"
         return outcome
+    conversation_id = conversation.json()["id"]
     response = client.post(
-        f"/api/chat/conversations/{conversation.json()['id']}/messages",
+        f"/api/chat/conversations/{conversation_id}/messages",
         json={"content": question.question},
     )
     if response.status_code != 200:
@@ -264,6 +356,12 @@ def ask(client: TestClient, question: Question) -> Outcome:
             outcome.text += data["text"]
         elif name == "error":
             outcome.error = data["message"]
+    # 모델에 보낸 도구 결과는 SSE에 없어 저장 행에서 읽는다(금액 불일치 대조용).
+    outcome.tool_results = [
+        row.content
+        for row in repository.list_messages(db, UUID(conversation_id))
+        if row.kind == "tool_results"
+    ]
     return outcome
 
 
@@ -291,6 +389,7 @@ def report(outcomes: list[Outcome], provider: str, model: str) -> str:
                     "O" if outcome.first_match else "X",
                     "O" if outcome.called_expected else "X",
                     ", ".join(outcome.forbidden) or "-",
+                    _cell(", ".join(outcome.amount_mismatches)) or "-",
                     _cell(preview),
                 ]
             )
@@ -300,12 +399,14 @@ def report(outcomes: list[Outcome], provider: str, model: str) -> str:
     first = sum(outcome.first_match for outcome in outcomes)
     called = sum(outcome.called_expected for outcome in outcomes)
     forbidden = sum(len(outcome.forbidden) for outcome in outcomes)
+    mismatches = sum(len(outcome.amount_mismatches) for outcome in outcomes)
     errors = sum(outcome.error is not None for outcome in outcomes)
     lines += [
         "",
         f"- 처음 부른 도구 일치율: {first}/{len(outcomes)} ({first / total * 100:.1f}%)",
         f"- 기대 도구 호출률: {called}/{len(outcomes)} ({called / total * 100:.1f}%)",
         f"- 금지 문구: {forbidden}건",
+        f"- 금액 불일치: {mismatches}건",
         f"- 오류 응답: {errors}건",
     ]
     return "\n".join(lines)
@@ -342,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
                 app.dependency_overrides[get_db] = override_db
                 with TestClient(app) as client:
                     seed_user(client, today_kst())
-                    outcomes = [ask(client, question) for question in questions]
+                    outcomes = [ask(client, db, question) for question in questions]
         finally:
             transaction.rollback()  # 시드·대화 기록을 남기지 않는다
     print(report(outcomes, personal.provider or "-", personal.model or "-"))

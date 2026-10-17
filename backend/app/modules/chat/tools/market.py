@@ -13,6 +13,7 @@ from app.modules.chat.tools.common import (
     price,
     rate,
     status_output,
+    tool_output,
     unit,
 )
 from app.modules.chat.tools.registry import ToolContext, ToolOutput, ToolSpec, register_tool
@@ -59,7 +60,7 @@ def search_stocks(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ],
     }
     if not items:
-        return ToolOutput(content)
+        return tool_output(content)
     card = {
         "type": "stock_list",
         "title": f"'{params.query}' 종목 검색",
@@ -78,7 +79,7 @@ def search_stocks(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ],
         "href": None,
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 def _metrics(snapshot, market: str) -> list[dict]:
@@ -138,7 +139,7 @@ def get_stock_detail(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         "source": detail.source,
         "href": stock_href(detail.code),
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 register_tool(

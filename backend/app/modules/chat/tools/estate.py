@@ -22,6 +22,7 @@ from app.modules.chat.tools.common import (
     number,
     plain,
     status_output,
+    tool_output,
 )
 from app.modules.chat.tools.registry import ToolContext, ToolOutput, ToolSpec, register_tool
 from app.modules.estate import service as estate_service
@@ -195,7 +196,7 @@ def get_gift_deductions(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         "ruleVersion": rule_version,
     }
     if not rows:
-        return ToolOutput(content)
+        return tool_output(content)
     card = {
         "type": "table",
         "title": f"증여재산공제 현황 ({day_text(ctx.today)} 기준)",
@@ -211,7 +212,7 @@ def get_gift_deductions(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ),
         "href": "/estate?tab=deductions",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 # ── estimate_gift_tax ──────────────────────────────────────────────────
@@ -252,8 +253,8 @@ def estimate_gift_tax(ctx: ToolContext, params: BaseModel) -> ToolOutput:
     who = member.display_name if member else RELATION_LABEL[relation]
     content = {
         "summary": (
-            f"{who}에게 {params.amount:,}원을 증여하면(증여자 {DONOR_LABEL[params.donor_group]}) "
-            f"예상 납부 세액은 {result.payable_tax:,}원입니다({REFERENCE_NOTE})."
+            f"{who}에게 {krw(params.amount)}을 증여하면(증여자 {DONOR_LABEL[params.donor_group]}) "
+            f"예상 납부 세액은 {krw(result.payable_tax)}입니다({REFERENCE_NOTE})."
         ),
         "recipient": {
             "name": member.display_name if member else None,
@@ -280,7 +281,7 @@ def estimate_gift_tax(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         "payableTax": krw(result.payable_tax),
         "href": "/estate?tab=gift-tax",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 # ── compare_estate_plans ───────────────────────────────────────────────
@@ -398,7 +399,7 @@ def compare_estate_plans(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ],
         "href": "/estate?tab=compare",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 # ── plan_gifts ─────────────────────────────────────────────────────────
@@ -467,8 +468,8 @@ def plan_gifts(ctx: ToolContext, params: BaseModel) -> ToolOutput:
     content = {
         "summary": (
             f"{who}의 {target_age}세({day_text(plan.end_date)})까지 10년마다 공제 한도만큼 나눠 "
-            f"증여하면 총 {plan.total_gifted:,}원, 예상 세금 "
-            f"{plan.total_tax:,}원입니다({REFERENCE_NOTE})."
+            f"증여하면 총 {krw(plan.total_gifted)}, 예상 세금 "
+            f"{krw(plan.total_tax)}입니다({REFERENCE_NOTE})."
         ),
         "recipient": {
             "name": member.display_name if member else None,
@@ -484,7 +485,7 @@ def plan_gifts(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         **plain(plan),
     }
     if not plan.schedule:
-        return ToolOutput(content)
+        return tool_output(content)
     card = {
         "type": "table",
         "title": f"{who} 분산 증여 플랜",
@@ -511,7 +512,7 @@ def plan_gifts(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ),
         "href": "/estate?tab=plan",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 MEMBER_NAME_RULE = (

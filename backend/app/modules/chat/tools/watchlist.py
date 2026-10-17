@@ -14,6 +14,7 @@ from app.modules.chat.tools.common import (
     plain,
     price,
     rate,
+    tool_output,
 )
 from app.modules.chat.tools.market import CodeInput
 from app.modules.chat.tools.registry import ToolContext, ToolOutput, ToolSpec, register_tool
@@ -26,7 +27,7 @@ ADD_STATUSES = {"NOT_FOUND": "not_found", "CONFLICT": "conflict"}
 def get_watchlist(ctx: ToolContext, params: BaseModel) -> ToolOutput:
     items = watchlist_service.list_items(ctx.db, ctx.user.id)
     if not items:
-        return ToolOutput(
+        return tool_output(
             {
                 "status": "empty",
                 "message": (
@@ -69,7 +70,7 @@ def get_watchlist(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         ],
         "href": "/stocks/watchlist",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 def add_to_watchlist(ctx: ToolContext, params: BaseModel) -> ToolOutput:
@@ -93,7 +94,7 @@ def add_to_watchlist(ctx: ToolContext, params: BaseModel) -> ToolOutput:
         "description": f"'{item.group_name}' 그룹 · 관심종목 화면에서 확인하세요.",
         "href": "/stocks/watchlist",
     }
-    return ToolOutput(content, card)
+    return tool_output(content, card)
 
 
 register_tool(
